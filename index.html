@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Incheon Airport Flight Info</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white">
+    <div id="root"></div>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel Standalone for JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script>
+        // Check if React is loaded
+        if (typeof React === 'undefined') {
+            console.error('React is not loaded');
+        }
+        if (typeof ReactDOM === 'undefined') {
+            console.error('ReactDOM is not loaded');
+        }
+        if (typeof Babel === 'undefined') {
+            console.error('Babel is not loaded');
+        }
+    </script>
+
+    <script type="text/babel" data-presets="react">
+        const { useState, useEffect, useCallback, useMemo } = React;
+
+        // --- Types & Constants ---
+        const TERMINALS = [
+            { id: 'P01', name: '1터미널', gateStart: 1, gateEnd: 50 },
+            { id: 'P02', name: '탑승동', gateStart: 101, gateEnd: 132 },
+            { id: 'P03', name: '2터미널', gateStart: 208, gateEnd: 291 },
+        ];
+
+        const EXCLUDED_GATES = new Set([4, 13, 44, 120, 226, 227, 228, 229, 244, 271, 272, 273]);
+
+        const GATE_API_URL = 'https://corsproxy.io/?' + encodeURIComponent('http://apis.data.go.kr/B551177/StatusOfPassengerFlightsDSOdp/getPassengerDeparturesDSOdp?serviceKey=6uC38lshDqWE5U0LuYIGHZ3XeIIEocXrQmhXd11WEmLFLh5ygZSG%2FPNeYov0pyzTU99ISscjIZIp%2FL%2FE2oI%2FYA%3D%3D&type=xml');
+
+        const COUNTER_API_URL = 'https://corsproxy.io/?' + encodeURIComponent('http://apis.data.go.kr/B551177/StatusOfPassengerFlightsDeOdp/getPassengerDeparturesDeOdp?serviceKey=6uC38lshDqWE5U0LuYIGHZ3XeIIEocXrQmhXd11WEmLFLh5ygZSG%2FPNeYov0pyzTU99ISscjIZIp%2FL%2FE2oI%2FYA%3D%3D&type=xml');
+
+        const Page = {
+            Main: 0,
+            GateUsage: 1,
+            GateInfo: 2,
+            EmptyGates: 3,
+            CounterInfoTerminalSelect: 4,
+            CounterInfoT1: 5,
+            CounterInfoT2: 6,
+        };
+
+        // --- Zone Definitions ---
+        const T2_ZONES = [
+            { id: 'A-1', label: 'A-1', ranges: [{ letter: 'A', start: 1, end: 16 }] },
+            { id: 'A-2', label: 'A-2', ranges: [{ letter: 'A', start: 17, end: 32 }] },
+            { id: 'A-3', label: 'A-3', ranges: [{ letter: 'A', start: 33, end: 48 }] },
+            { id: 'C-1', label: 'C-1', ranges: [{ letter: 'C', start: 1, end: 16 }] },
+            { id: 'C-2', label: 'C-2', ranges: [{ letter: 'C', start: 17, end: 38 }] },
+            { id: 'D-1', label: 'D-1', ranges: [{ letter: 'D', start: 1, end: 20 }] },
+            { id: 'D-2', label: 'D-2', ranges: [{ letter: 'D', start: 21, end: 40 }] },
+            { id: 'E-1', label: 'E-1', ranges: [{ letter: 'E', start: 1, end: 20 }] },
+            { id: 'E-2', label: 'E-2', ranges: [{ letter: 'E', start: 21, end: 40 }] },
+            { id: 'H-1', label: 'H-1', ranges: [{ letter: 'H', start: 1, end: 20 }] },
+            { id: 'H-2', label: 'H-2', ranges: [{ letter: 'H', start: 21, end: 40 }] },
+            { id: 'J-1', label: 'J-1', ranges: [{ letter: 'J', start: 1, end: 20 }] },
+            { id: 'J-2', label: 'J-2', ranges: [{ letter: 'J', start: 21, end: 40 }] },
+            { id: 'K-1', label: 'K-1', ranges: [{ letter: 'K', start: 1, end: 20 }] },
+            { id: 'K-2', label: 'K-2', ranges: [{ letter: 'K', start: 21, end: 36 }] },
+            { id: 'M-1', label: 'M-1', ranges: [{ letter: 'M', start: 1, end: 16 }] },
+            { id: 'M-2', label: 'M-2', ranges: [{ letter: 'M', start: 17, end: 32 }] },
+            { id: 'N-1', label: 'N-1', ranges: [{ letter: 'N', start: 1, end: 16 }] },
+        ];
+
+        const T1_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N'];
+        const T1_EXCLUDED_IDS = new Set(['A-2', 'C-1', 'C-2', 'G-1', 'G-2', 'L-1', 'N-2']);
+
+        const getT1Zones = () => {
+            const zones = [];
+            T1_LETTERS.forEach(letter => {
+                let range1End = 18;
+                let range2Start = 19;
+                let range2End = 36;
+
+                if (letter === 'A') {
+                    range1End = 11;
+                    range2Start = 12;
+                } else if (letter === 'B') {
+                    range1End = 18;
+                    range2Start = 19;
+                }
+
+                const id1 = `${letter}-1`;
+                if (!T1_EXCLUDED_IDS.has(id1)) {
+                    zones.push({ id: id1, label: id1, ranges: [{ letter, start: 1, end: range1End }] });
+                }
+
+                const id2 = `${letter}-2`;
+                if (!T1_EXCLUDED_IDS.has(id2)) {
+                    zones.push({ id: id2, label: id2, ranges: [{ letter, start: range2Start, end: range2End }] });
+                }
+            });
+            return zones;
+        };
+
+        const T1_ZONES = getT1Zones();
+
+        // --- Helper Functions ---
+        const COUNTER_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N'];
+
+        const parseCounterRanges = (rangeStr) => {
+            const ranges = [];
+            const parts = rangeStr.replace(/～|~|–|—/g, '-').split(/[\s,]+/);
+
+            const rangeRegex = /^([A-Z])(\d{1,3})(-([A-Z])?(\d{1,3}))?$/i;
+            const singleLetterRegex = /^([A-Z])$/i;
+
+            for (const part of parts) {
+                if (!part) continue;
+
+                const letterMatch = singleLetterRegex.exec(part);
+                if (letterMatch) {
+                    ranges.push({
+                        letter: letterMatch[1].toUpperCase(),
+                        start: 1,
+                        end: 999
+                    });
+                    continue;
+                }
+
+                const match = rangeRegex.exec(part);
+                if (match) {
+                    const startLetter = match[1].toUpperCase();
+                    const startNum = parseInt(match[2], 10);
+                    const endLetter = match[4] ? match[4].toUpperCase() : startLetter;
+                    const endNum = match[5] ? parseInt(match[5], 10) : startNum;
+
+                    if (startLetter === endLetter) {
+                        ranges.push({
+                            letter: startLetter,
+                            start: Math.min(startNum, endNum),
+                            end: Math.max(startNum, endNum)
+                        });
+                    } else {
+                        const startIndex = COUNTER_LETTERS.indexOf(startLetter);
+                        const endIndex = COUNTER_LETTERS.indexOf(endLetter);
+
+                        if (startIndex !== -1 && endIndex !== -1 && startIndex < endIndex) {
+                            ranges.push({
+                                letter: startLetter,
+                                start: startNum,
+                                end: 999
+                            });
+                            
+                            for (let i = startIndex + 1; i < endIndex; i++) {
+                                ranges.push({
+                                    letter: COUNTER_LETTERS[i],
+                                    start: 1,
+                                    end: 999
+                                });
+                            }
+
+                            ranges.push({
+                                letter: endLetter,
+                                start: 1,
+                                end: endNum
+                            });
+                        } else {
+                            ranges.push({ letter: startLetter, start: startNum, end: 999 });
+                            ranges.push({ letter: endLetter, start: 1, end: endNum });
+                        }
+                    }
+                }
+            }
+            
+            return ranges;
+        };
+
+        const getFlightStatus = (flight) => {
+            const remark = flight.remark || '';
+            const chkinrange = flight.chkinrange;
+            
+            let isCheckinOpenTime = false;
+            if (flight.scheduleDateTime.length === 12) {
+                const year = parseInt(flight.scheduleDateTime.substring(0, 4));
+                const month = parseInt(flight.scheduleDateTime.substring(4, 6)) - 1;
+                const day = parseInt(flight.scheduleDateTime.substring(6, 8));
+                const hour = parseInt(flight.scheduleDateTime.substring(8, 10));
+                const minute = parseInt(flight.scheduleDateTime.substring(10, 12));
+                
+                const depTime = new Date(year, month, day, hour, minute);
+                const now = new Date();
+                
+                const timeDiff = depTime.getTime() - now.getTime();
+                const minutesDiff = timeDiff / (1000 * 60);
+                
+                if (minutesDiff > 50 && minutesDiff < 180) {
+                    isCheckinOpenTime = true;
+                }
+            }
+
+            const excludedRemarks = ['탑승중', '탑승마감', '출발', '결항', '회항', 'Boarding', 'Final Call', 'Departed', 'Cancelled', 'Returned'];
+            const isExcluded = excludedRemarks.some(r => remark.includes(r));
+
+            const hasCounter = chkinrange && chkinrange !== '' && chkinrange !== 'null' && chkinrange !== '---';
+
+            if (!isExcluded && hasCounter && isCheckinOpenTime) {
+                return { text: '체크인 오픈', color: 'text-green-400', isActiveCheckin: true };
+            }
+
+            if (!remark) return { text: '확인중', color: 'text-gray-400', isActiveCheckin: false };
+            
+            if (remark.includes('출발') || remark.includes('Departed')) return { text: remark, color: 'text-red-400', isActiveCheckin: false };
+            if (remark.includes('지연') || remark.includes('Delayed')) return { text: remark, color: 'text-yellow-400', isActiveCheckin: false };
+            if (remark.includes('취소') || remark.includes('Cancelled')) return { text: remark, color: 'text-red-400', isActiveCheckin: false };
+            if (remark.includes('회항') || remark.includes('Returned')) return { text: remark, color: 'text-red-400', isActiveCheckin: false };
+            
+            return { text: remark, color: 'text-cyan-400', isActiveCheckin: false };
+        };
+
+        // --- Service Functions ---
+        const parseFlightsFromXML = (xmlText) => {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+            const items = xmlDoc.getElementsByTagName('item');
+            const flights = [];
+
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                const gatenumber = item.querySelector('gatenumber')?.textContent?.trim() ?? '';
+                const chkinrange = item.querySelector('chkinrange')?.textContent?.trim() ?? '';
+                const codeshare = item.querySelector('codeshare')?.textContent?.trim() ?? null;
+
+                if (codeshare === 'Slave' || codeshare === 'slave') {
+                    continue;
+                }
+
+                if ((gatenumber && gatenumber !== '-') || (chkinrange && chkinrange !== '---')) {
+                    flights.push({
+                        gatenumber: gatenumber === '-' ? '' : gatenumber,
+                        flightId: item.querySelector('flightId')?.textContent ?? '',
+                        scheduleDateTime: item.querySelector('scheduleDateTime')?.textContent ?? '',
+                        terminalid: item.querySelector('terminalid')?.textContent ?? '',
+                        remark: item.querySelector('remark')?.textContent ?? null,
+                        airline: item.querySelector('airline')?.textContent ?? '',
+                        estimateDateTime: item.querySelector('estimateDateTime')?.textContent ?? null,
+                        chkinrange: chkinrange === '---' ? null : chkinrange,
+                        airportkor: item.querySelector('airportkor')?.textContent ?? '',
+                        airport: item.querySelector('airport')?.textContent ?? '',
+                        codeshare: codeshare,
+                    });
+                }
+            }
+            return flights;
+        };
+
+        const deDuplicateFlights = (flights) => {
+            const seen = new Set();
+            const uniqueFlights = [];
+            for (const flight of flights) {
+                const key = `${flight.flightId}:${flight.scheduleDateTime}:${flight.gatenumber}:${flight.chkinrange}`;
+                if (!seen.has(key)) {
+                    uniqueFlights.push(flight);
+                    seen.add(key);
+                }
+            }
+            return uniqueFlights;
+        };
+
+        const formatDate = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}${month}${day}`;
+        };
+
+        const fetchFlightData = async () => {
+            try {
+                const today = new Date();
+                const tomorrow = new Date();
+                tomorrow.setDate(today.getDate() + 1);
+
+                const todayStr = formatDate(today);
+                const tomorrowStr = formatDate(tomorrow);
+                
+                const fetchGateToday = fetch(`${GATE_API_URL}&selectdate=${todayStr}&from_time=0000&to_time=2359`).then(res => res.text());
+                const fetchGateTomorrow = fetch(`${GATE_API_URL}&selectdate=${tomorrowStr}&from_time=0000&to_time=2359`).then(res => res.text());
+                const fetchCounterToday = fetch(`${COUNTER_API_URL}&selectdate=${todayStr}&from_time=0000&to_time=2359`).then(res => res.text());
+                const fetchCounterTomorrow = fetch(`${COUNTER_API_URL}&selectdate=${tomorrowStr}&from_time=0000&to_time=2359`).then(res => res.text());
+
+                const responses = await Promise.all([
+                    fetchGateToday,
+                    fetchGateTomorrow,
+                    fetchCounterToday,
+                    fetchCounterTomorrow
+                ]);
+
+                const allFlights = responses.flatMap(xml => parseFlightsFromXML(xml));
+                return deDuplicateFlights(allFlights).sort((a, b) => a.scheduleDateTime.localeCompare(b.scheduleDateTime));
+
+            } catch (error) {
+                console.error('Failed to fetch flight data:', error);
+                throw error;
+            }
+        };
+
+        // --- Components ---
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center h-full">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-cyan-500"></div>
+            </div>
+        );
+
+        const Header = ({ onBack, title, onRefresh, showDeparted, onToggleDeparted }) => (
+            <header className="bg-slate-800 p-4 shadow-lg sticky top-0 z-10 flex flex-col gap-3">
+                <div className="flex items-center w-full">
+                    {onBack && (
+                        <button onClick={onBack} className="text-cyan-400 text-2xl mr-4 hover:text-cyan-300" aria-label="Go back">
+                            &#8592;
+                        </button>
+                    )}
+                    <h1 className="text-xl font-bold text-white truncate">{title}</h1>
+                </div>
+                
+                <div className="flex items-center justify-between w-full border-t border-slate-700 pt-3">
+                    <div>
+                        {onToggleDeparted && (
+                            <button 
+                                onClick={onToggleDeparted}
+                                className={`px-3 py-1.5 rounded text-sm font-bold transition-colors border ${
+                                    showDeparted 
+                                    ? 'bg-green-600 border-green-500 text-white' 
+                                    : 'bg-slate-700 border-slate-600 text-slate-400'
+                                }`}
+                            >
+                                {showDeparted ? '출발편 보기 ON' : '출발편 보기 OFF'}
+                            </button>
+                        )}
+                    </div>
+                    <button 
+                        onClick={onRefresh} 
+                        className="text-slate-300 hover:text-white transition-colors p-1 flex items-center gap-1"
+                        aria-label="새로고침"
+                    >
+                        <span className="text-xs text-slate-400">새로고침</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+        );
+
+        const CounterMap = ({ zone, flights }) => {
+            const activeCounters = useMemo(() => {
+                const activeSet = new Set();
+                flights.forEach(flight => {
+                    const { isActiveCheckin } = getFlightStatus(flight);
+                    if (isActiveCheckin && flight.chkinrange) {
+                        const ranges = parseCounterRanges(flight.chkinrange);
+                        ranges.forEach(range => {
+                            const end = range.end > 200 ? 50 : range.end;
+                            for (let i = range.start; i <= end; i++) {
+                                activeSet.add(`${range.letter}${i}`);
+                            }
+                        });
+                    }
+                });
+                return activeSet;
+            }, [flights]);
+
+            const zoneCounters = useMemo(() => {
+                const counters = [];
+                zone.ranges.forEach(range => {
+                    const end = range.end > 200 ? 50 : range.end;
+                    for (let i = range.start; i <= end; i++) {
+                        counters.push(`${range.letter}${i}`);
+                    }
+                });
+                return counters;
+            }, [zone]);
+
+            return (
+                <div className="bg-slate-800 p-3 rounded-lg mb-4 shadow-inner">
+                    <div className="grid grid-cols-6 gap-1.5">
+                        {zoneCounters.map(id => (
+                            <div 
+                                key={id} 
+                                className={`aspect-square flex items-center justify-center rounded text-xs font-mono font-bold transition-colors ${
+                                    activeCounters.has(id) 
+                                        ? 'bg-green-500 text-white shadow-[0_0_8px_rgba(34,197,94,0.6)]' 
+                                        : 'bg-slate-700 text-slate-400'
+                                }`}
+                            >
+                                {id}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const FlightCard = ({ flight }) => {
+            const formatTime = (dateTime) => {
+                if (dateTime.length !== 12) return dateTime;
+                return `${dateTime.substring(8, 10)}:${dateTime.substring(10, 12)}`;
+            };
+
+            const statusColor = (remark) => {
+                if (!remark) return 'text-gray-400';
+                if (remark.includes('출발') || remark.includes('Departed')) return 'text-green-400';
+                if (remark.includes('지연') || remark.includes('Delayed')) return 'text-yellow-400';
+                if (remark.includes('취소') || remark.includes('Cancelled')) return 'text-red-400';
+                return 'text-cyan-400';
+            };
+
+            return (
+                <div className="bg-slate-800 rounded-lg p-4 mb-3 shadow-md border-l-4 border-cyan-500">
+                    <div className="flex justify-between items-center">
+                        <span className="text-lg font-bold text-white">{flight.flightId}</span>
+                        <span className={`text-lg font-semibold ${statusColor(flight.remark)}`}>{flight.remark || '확인중'}</span>
+                    </div>
+                    <div className="mt-2 text-slate-300">
+                        <p>예정 시간: <span className="font-mono">{formatTime(flight.scheduleDateTime)}</span></p>
+                    </div>
+                </div>
+            );
+        };
+
+        const CounterFlightCard = ({ flight }) => {
+            const formatTime = (dateTime) => {
+                if (!dateTime || dateTime.length < 12) return '';
+                return `${dateTime.substring(8, 10)}:${dateTime.substring(10, 12)}`;
+            };
+
+            const { text: statusText, color: statusColor } = getFlightStatus(flight);
+            const scheduledTime = formatTime(flight.scheduleDateTime);
+            const estimatedTime = formatTime(flight.estimateDateTime);
+
+            return (
+                <div className="bg-slate-800 rounded-lg p-4 mb-3 shadow-md border-l-4 border-indigo-500">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-sm text-slate-400">{flight.airline}</span>
+                            <h3 className="text-lg font-bold text-white">
+                                {flight.flightId}
+                                <span className="text-base font-normal text-slate-300 ml-2">
+                                    {flight.airportkor}{flight.airport ? ` (${flight.airport})` : ''}
+                                </span>
+                            </h3>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-lg font-mono text-white">
+                                {estimatedTime && scheduledTime !== estimatedTime && <span className="line-through text-slate-400 mr-2">{scheduledTime}</span>}
+                                <span>{estimatedTime || scheduledTime}</span>
+                            </p>
+                            <span className={`text-sm font-semibold ${statusColor}`}>{statusText}</span>
+                        </div>
+                    </div>
+                    <div className="mt-2 text-slate-300">
+                        <p>체크인카운터: <span className="font-mono bg-slate-700 px-2 py-1 rounded">{flight.chkinrange}</span></p>
+                    </div>
+                </div>
+            );
+        };
+
+        const MainScreen = ({ onNavigate, onRefresh, showDeparted, onToggleDeparted }) => {
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header title="인천공항 운항 정보" onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <main className="flex-grow p-5 flex flex-col justify-center gap-6">
+                        <button
+                            onClick={() => onNavigate(Page.CounterInfoTerminalSelect)}
+                            className="p-10 rounded-lg text-2xl font-bold transition-all duration-200 shadow-xl bg-indigo-600 text-white hover:bg-indigo-500"
+                        >
+                            카운터 배정정보
+                        </button>
+                        <button
+                            onClick={() => onNavigate(Page.GateUsage)}
+                            className="p-10 rounded-lg text-2xl font-bold transition-all duration-200 shadow-xl bg-teal-600 text-white hover:bg-teal-500"
+                        >
+                            탑승구 사용정보
+                        </button>
+                    </main>
+                </div>
+            );
+        };
+
+        const GateUsageScreen = ({ selectedTerminal, onSelectTerminal, onNavigate, onBack, onRefresh, showDeparted, onToggleDeparted }) => {
+            const handleTerminalSelect = (terminal) => {
+                onSelectTerminal(selectedTerminal?.id === terminal.id ? null : terminal);
+            };
+            
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header onBack={onBack} title="탑승구 사용정보" onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <main className="flex-grow p-5 flex flex-col justify-center">
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                            {TERMINALS.map((terminal) => (
+                                <button key={terminal.id} onClick={() => handleTerminalSelect(terminal)}
+                                    className={`p-6 rounded-lg text-lg font-semibold transition-all duration-200 shadow-lg ${
+                                        selectedTerminal?.id === terminal.id
+                                            ? 'bg-cyan-500 text-white ring-2 ring-cyan-300'
+                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    {terminal.name}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <button onClick={() => onNavigate(Page.GateInfo)} disabled={!selectedTerminal} className="p-8 rounded-lg text-xl font-bold transition-all duration-200 shadow-xl bg-sky-600 text-white disabled:bg-slate-700 disabled:text-slate-500 hover:enabled:bg-sky-500">
+                                탑승구별 조회
+                            </button>
+                            <button onClick={() => onNavigate(Page.EmptyGates)} disabled={!selectedTerminal} className="p-8 rounded-lg text-xl font-bold transition-all duration-200 shadow-xl bg-emerald-600 text-white disabled:bg-slate-700 disabled:text-slate-500 hover:enabled:bg-emerald-500">
+                                미사용 탑승구
+                            </button>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const CounterInfoTerminalSelectScreen = ({ onNavigate, onBack, onRefresh, showDeparted, onToggleDeparted }) => {
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header onBack={onBack} title="카운터 정보 - 터미널 선택" onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <main className="flex-grow p-5 flex flex-col justify-center gap-6">
+                        <button
+                            onClick={() => onNavigate(Page.CounterInfoT1)}
+                            className="p-10 rounded-lg text-2xl font-bold transition-all duration-200 shadow-xl bg-cyan-600 text-white hover:bg-cyan-500"
+                        >
+                            1 터미널
+                        </button>
+                        <button
+                            onClick={() => onNavigate(Page.CounterInfoT2)}
+                            className="p-10 rounded-lg text-2xl font-bold transition-all duration-200 shadow-xl bg-emerald-600 text-white hover:bg-emerald-500"
+                        >
+                            2 터미널
+                        </button>
+                    </main>
+                </div>
+            );
+        };
+
+        const CounterInfoScreen = ({ allFlights, onBack, onRefresh, showDeparted, onToggleDeparted, terminalName, zones, isT1 }) => {
+            const [selectedZoneId, setSelectedZoneId] = useState(null);
+            const [filteredFlights, setFilteredFlights] = useState([]);
+
+            const currentZone = useMemo(() => zones.find(z => z.id === selectedZoneId), [zones, selectedZoneId]);
+
+            useEffect(() => {
+                if (!currentZone) {
+                    setFilteredFlights([]);
+                    return;
+                }
+
+                const terminalFlights = allFlights.filter(f => {
+                    if (isT1) {
+                        return f.terminalid === 'P01' || f.terminalid === 'P02';
+                    }
+                    return f.terminalid === 'P03';
+                });
+
+                const flightsInZone = terminalFlights
+                    .filter(f => {
+                        if (!f.chkinrange) return false;
+                        
+                        const flightRanges = parseCounterRanges(f.chkinrange);
+                        
+                        return flightRanges.some(fRange => 
+                            currentZone.ranges.some(zRange => 
+                                fRange.letter === zRange.letter &&
+                                fRange.start <= zRange.end &&
+                                fRange.end >= zRange.start
+                            )
+                        );
+                    })
+                    .sort((a, b) => a.scheduleDateTime.localeCompare(b.scheduleDateTime));
+                
+                const uniqueFlights = [];
+                const seen = new Set();
+
+                for (const flight of flightsInZone) {
+                    const key = `${flight.flightId}:${flight.scheduleDateTime}`;
+                    if (!seen.has(key)) {
+                        uniqueFlights.push(flight);
+                        seen.add(key);
+                    }
+                }
+                
+                setFilteredFlights(uniqueFlights);
+            }, [allFlights, isT1, currentZone]);
+
+            const handleZoneSelect = (id) => {
+                setSelectedZoneId(id);
+            };
+
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header onBack={onBack} title={`${terminalName} 카운터`} onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <div className="p-4 overflow-y-auto flex-grow">
+                        <div className="grid grid-cols-4 gap-2">
+                            {zones.map(zone => (
+                                <button
+                                    key={zone.id}
+                                    onClick={() => handleZoneSelect(zone.id)}
+                                    className={`p-3 rounded font-mono text-center transition-colors ${selectedZoneId === zone.id ? 'bg-indigo-500 text-white' : 'bg-slate-800 hover:bg-slate-700'}`}
+                                >
+                                    {zone.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {selectedZoneId && currentZone && (
+                            <div className="mt-6">
+                                <h2 className="text-xl font-bold mb-4 text-indigo-400 border-b-2 border-slate-700 pb-2">
+                                    {selectedZoneId} Zone 운항 정보
+                                </h2>
+                                
+                                <CounterMap zone={currentZone} flights={filteredFlights} />
+
+                                {filteredFlights.length > 0 ? (
+                                    filteredFlights.map((flight) => <CounterFlightCard key={`${flight.flightId}-${flight.scheduleDateTime}-${flight.chkinrange}`} flight={flight} />)
+                                ) : (
+                                    <p className="text-slate-400 text-center mt-8">해당 존에 배정된 운항편이 없습니다.</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const GateInfoScreen = ({ allFlights, terminal, onBack, onRefresh, showDeparted, onToggleDeparted }) => {
+            const [selectedGate, setSelectedGate] = useState(null);
+
+            const terminalFlights = useMemo(() => 
+                allFlights.filter(f => f.terminalid === terminal.id),
+            [allFlights, terminal.id]);
+
+            const gateFlights = useMemo(() => {
+                if (!selectedGate) return [];
+                
+                const flightsForGate = terminalFlights.filter(f => f.gatenumber === selectedGate);
+                const uniqueFlightsByTime = [];
+                const seenTimes = new Set();
+
+                for (const flight of flightsForGate) {
+                    if (!seenTimes.has(flight.scheduleDateTime)) {
+                        uniqueFlightsByTime.push(flight);
+                        seenTimes.add(flight.scheduleDateTime);
+                    }
+                }
+                return uniqueFlightsByTime;
+            }, [terminalFlights, selectedGate]);
+            
+            const gates = useMemo(() => {
+                const gateList = [];
+                const padLength = terminal.id === 'P01' ? 2 : 3;
+                for (let i = terminal.gateStart; i <= terminal.gateEnd; i++) {
+                    if (!EXCLUDED_GATES.has(i)) {
+                        gateList.push(String(i).padStart(padLength, '0'));
+                    }
+                }
+                return gateList.sort();
+            }, [terminal]);
+
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header onBack={onBack} title={`${terminal.name} - 탑승구`} onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <div className="p-4 overflow-y-auto flex-grow">
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                            {gates.map((gate) => (
+                                <button
+                                    key={gate}
+                                    onClick={() => setSelectedGate(gate)}
+                                    className={`p-2 rounded font-mono text-center transition-colors ${selectedGate === gate ? 'bg-cyan-500 text-white' : 'bg-slate-800 hover:bg-slate-700'}`}
+                                >
+                                    {gate}
+                                </button>
+                            ))}
+                        </div>
+                        {selectedGate && (
+                            <div className="mt-6">
+                                <h2 className="text-xl font-bold mb-4 text-cyan-400 border-b-2 border-slate-700 pb-2">
+                                    Gate {selectedGate} 운항 정보
+                                </h2>
+                                {gateFlights.length > 0 ? (
+                                    gateFlights.map((flight) => <FlightCard key={flight.flightId + flight.scheduleDateTime} flight={flight} />)
+                                ) : (
+                                    <p className="text-slate-400 text-center mt-8">해당 탑승구에 예정된 운항편이 없습니다.</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const EmptyGateScreen = ({ allFlights, terminal, onBack, onRefresh, showDeparted, onToggleDeparted }) => {
+            const [nHours, setNHours] = useState(3);
+            const [showNumPad, setShowNumPad] = useState(false);
+            const [emptyGates, setEmptyGates] = useState([]);
+            const [nextFlight, setNextFlight] = useState(null);
+            const [searched, setSearched] = useState(false);
+
+            const searchEmptyGates = useCallback(() => {
+                const now = new Date();
+                const searchUntil = new Date(now.getTime() + nHours * 60 * 60 * 1000);
+                
+                const formatForCompare = (date) => {
+                    return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`;
+                };
+                
+                const nowStr = formatForCompare(now);
+                const untilStr = formatForCompare(searchUntil);
+
+                const terminalFlights = allFlights.filter(f => f.terminalid === terminal.id);
+                const busyGates = new Set();
+
+                terminalFlights.forEach(flight => {
+                    if (flight.scheduleDateTime >= nowStr && flight.scheduleDateTime <= untilStr) {
+                        busyGates.add(flight.gatenumber);
+                    }
+                });
+
+                const allTerminalGates = [];
+                const padLength = terminal.id === 'P01' ? 2 : 3;
+                for (let i = terminal.gateStart; i <= terminal.gateEnd; i++) {
+                    if (!EXCLUDED_GATES.has(i)) {
+                        allTerminalGates.push(String(i).padStart(padLength, '0'));
+                    }
+                }
+
+                const availableGates = allTerminalGates.filter(gate => !busyGates.has(gate));
+                setEmptyGates(availableGates);
+                setNextFlight(null);
+                setSearched(true);
+            }, [nHours, allFlights, terminal]);
+
+            const showNextFlight = (gate) => {
+                const now = new Date();
+                const nowStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+                
+                const next = allFlights
+                    .filter(f => f.gatenumber === gate && f.scheduleDateTime > nowStr)
+                    .sort((a, b) => a.scheduleDateTime.localeCompare(b.scheduleDateTime))[0];
+                setNextFlight(next || null);
+            };
+
+            return (
+                <div className="flex flex-col h-screen">
+                    <Header onBack={onBack} title={`${terminal.name} - 미사용`} onRefresh={onRefresh} showDeparted={showDeparted} onToggleDeparted={onToggleDeparted} />
+                    <div className="p-4 flex-grow overflow-y-auto">
+                        <div className="bg-slate-800 p-4 rounded-lg flex items-center justify-between mb-4">
+                            <div className="text-lg">
+                                <button onClick={() => setShowNumPad(!showNumPad)} className="bg-cyan-600 rounded-full w-10 h-10 text-xl font-bold mr-3 hover:bg-cyan-500">{nHours}</button>
+                                <span className="font-semibold">시간동안 운행 없음</span>
+                            </div>
+                            <button onClick={searchEmptyGates} className="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-500">검색</button>
+                        </div>
+
+                        {showNumPad && (
+                            <div className="grid grid-cols-5 gap-2 mb-4 p-3 bg-slate-700 rounded-lg">
+                                {Array.from({ length: 10 }, (_, i) => i + 1).map(num => (
+                                    <button key={num} onClick={() => { setNHours(num); setShowNumPad(false); }} className="p-3 bg-slate-800 rounded hover:bg-cyan-500">{num}</button>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {searched && (
+                            <>
+                                <h3 className="text-lg font-semibold mb-2 text-cyan-400">검색 결과 ({emptyGates.length}개)</h3>
+                                {emptyGates.length > 0 ? (
+                                    <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                                        {emptyGates.map(gate => (
+                                            <button key={gate} onClick={() => showNextFlight(gate)} className="p-2 rounded font-mono text-center bg-slate-700 hover:bg-slate-600">
+                                                {gate}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-slate-400 text-center mt-4">검색 조건에 맞는 탑승구가 없습니다.</p>
+                                )}
+                            </>
+                        )}
+
+                        {nextFlight && (
+                            <div className="mt-6">
+                                <h3 className="text-lg font-semibold mb-2 text-cyan-400">Gate {nextFlight.gatenumber} 다음 운항편</h3>
+                                <FlightCard flight={nextFlight} />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [page, setPage] = useState(Page.Main);
+            const [selectedTerminal, setSelectedTerminal] = useState(null);
+            const [flights, setFlights] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [showDeparted, setShowDeparted] = useState(true);
+
+            const loadData = async () => {
+                try {
+                    setLoading(true);
+                    const data = await fetchFlightData();
+                    setFlights(data);
+                } catch (err) {
+                    setError('운항 정보를 불러오는 데 실패했습니다.');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                loadData();
+            }, []);
+
+            const handleRefresh = () => {
+                loadData();
+            };
+
+            const toggleDeparted = () => {
+                setShowDeparted(prev => !prev);
+            };
+
+            const displayFlights = useMemo(() => {
+                if (!flights.length) return [];
+
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const tomorrowStr = `${tomorrow.getFullYear()}${String(tomorrow.getMonth() + 1).padStart(2, '0')}${String(tomorrow.getDate()).padStart(2, '0')}`;
+                const tomorrowNineAm = `${tomorrowStr}0900`;
+
+                return flights.filter(f => {
+                    if (f.scheduleDateTime > tomorrowNineAm) return false;
+
+                    if (!showDeparted) {
+                        if (f.remark && (f.remark.includes('출발') || f.remark.includes('Departed'))) {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
+            }, [flights, showDeparted]);
+
+            const goBack = () => {
+                switch (page) {
+                    case Page.GateUsage:
+                    case Page.CounterInfoTerminalSelect:
+                        setPage(Page.Main);
+                        break;
+                    case Page.GateInfo:
+                    case Page.EmptyGates:
+                        setPage(Page.GateUsage);
+                        break;
+                    case Page.CounterInfoT1:
+                    case Page.CounterInfoT2:
+                        setPage(Page.CounterInfoTerminalSelect);
+                        break;
+                    default:
+                        setPage(Page.Main);
+                }
+            };
+
+            const renderContent = () => {
+                if (loading) return <LoadingSpinner />;
+                if (error) return <p className="text-center text-red-500 p-8">{error}</p>;
+
+                switch (page) {
+                    case Page.GateUsage:
+                        return <GateUsageScreen selectedTerminal={selectedTerminal} onSelectTerminal={setSelectedTerminal} onNavigate={setPage} onBack={goBack} onRefresh={handleRefresh} showDeparted={showDeparted} onToggleDeparted={toggleDeparted} />;
+                    case Page.GateInfo:
+                        return <GateInfoScreen allFlights={displayFlights} terminal={selectedTerminal} onBack={goBack} onRefresh={handleRefresh} showDeparted={showDeparted} onToggleDeparted={toggleDeparted} />;
+                    case Page.EmptyGates:
+                        return <EmptyGateScreen allFlights={displayFlights} terminal={selectedTerminal} onBack={goBack} onRefresh={handleRefresh} showDeparted={showDeparted} onToggleDeparted={toggleDeparted} />;
+                    case Page.CounterInfoTerminalSelect:
+                        return <CounterInfoTerminalSelectScreen onNavigate={setPage} onBack={goBack} onRefresh={handleRefresh} showDeparted={showDeparted} onToggleDeparted={toggleDeparted} />;
+                    case Page.CounterInfoT1:
+                        return <CounterInfoScreen
+                            allFlights={displayFlights}
+                            onBack={goBack}
+                            onRefresh={handleRefresh}
+                            showDeparted={showDeparted} 
+                            onToggleDeparted={toggleDeparted}
+                            terminalName="1 터미널"
+                            zones={T1_ZONES}
+                            isT1={true}
+                        />;
+                    case Page.CounterInfoT2:
+                        return <CounterInfoScreen
+                            allFlights={displayFlights}
+                            onBack={goBack}
+                            onRefresh={handleRefresh}
+                            showDeparted={showDeparted} 
+                            onToggleDeparted={toggleDeparted}
+                            terminalName="2 터미널"
+                            zones={T2_ZONES}
+                            isT1={false}
+                        />;
+                    case Page.Main:
+                    default:
+                        return <MainScreen onNavigate={setPage} onRefresh={handleRefresh} showDeparted={showDeparted} onToggleDeparted={toggleDeparted} />;
+                }
+            };
+            
+            return (
+                <div className="max-w-md mx-auto bg-slate-900 min-h-screen font-sans shadow-2xl">
+                    {renderContent()}
+                </div>
+            );
+        };
+
+        // --- Initialize App ---
+        function initApp() {
+            try {
+                const rootElement = document.getElementById('root');
+                if (!rootElement) {
+                    console.error('Root element not found');
+                    return;
+                }
+
+                if (typeof ReactDOM === 'undefined' || !ReactDOM.createRoot) {
+                    console.error('ReactDOM.createRoot is not available. Using ReactDOM.render instead.');
+                    // Fallback for older React versions
+                    ReactDOM.render(
+                        React.createElement(React.StrictMode, null,
+                            React.createElement(App)
+                        ),
+                        rootElement
+                    );
+                    return;
+                }
+
+                const root = ReactDOM.createRoot(rootElement);
+                root.render(
+                    <React.StrictMode>
+                        <App />
+                    </React.StrictMode>
+                );
+            } catch (error) {
+                console.error('Error initializing app:', error);
+                document.getElementById('root').innerHTML = 
+                    '<div style="padding: 20px; color: red;">앱을 시작하는 중 오류가 발생했습니다. 콘솔을 확인하세요.<br/>Error: ' + error.message + '</div>';
+            }
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initApp);
+        } else {
+            initApp();
+        }
+    </script>
+</body>
+</html>
+
